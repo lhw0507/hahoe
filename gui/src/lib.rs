@@ -3,7 +3,40 @@ use wasm_bindgen::JsCast;
 use web_sys::{WebGl2RenderingContext, WebGlProgram, WebGlShader};
 use rand::*;
 
-fn SetRectangle(program : &WebGlProgram, context : &WebGl2RenderingContext, width : u32, height : u32){
+const WIDTH: usize = 800;
+const HEIGHT: usize = 600;
+
+fn SetColor(context : &WebGl2RenderingContext, width : usize, height : usize){
+    let mut color = Vec::<f32>::with_capacity((width * height * 24) as usize);
+    
+    for x in 0..width
+    {
+        for y in 0..height
+        {
+            let greenratio = rand::random::<f32>();
+            for _ in 0..6 {
+                color.push(0.0f32);
+                color.push(greenratio);
+                color.push(0.0f32);
+                color.push(1.0f32);
+            }
+        }
+    }
+    
+    unsafe {
+
+        let color_array_buf_view = js_sys::Float32Array::view(&color);
+
+        context.buffer_data_with_array_buffer_view(
+            WebGl2RenderingContext::ARRAY_BUFFER,
+            &color_array_buf_view,
+            WebGl2RenderingContext::STATIC_DRAW,
+        );
+        
+    }
+}
+
+fn SetRectangle(context : &WebGl2RenderingContext, width : usize, height : usize){
 
     let width_ratio = 2. / width as f32;
     let height_ratio = 2./ height as f32;
@@ -11,6 +44,8 @@ fn SetRectangle(program : &WebGlProgram, context : &WebGl2RenderingContext, widt
     let start_width_ratio = -1.;
     let start_height_ratio = -1.;
 
+    let mut vertices = Vec::<f32>::with_capacity((width * height * 18) as usize);
+    
     for x in 0..width
     {
         for y in 0..height
@@ -20,39 +55,43 @@ fn SetRectangle(program : &WebGlProgram, context : &WebGl2RenderingContext, widt
             let y1 = start_height_ratio + y as f32* height_ratio;
             let y2 = start_height_ratio + (y + 1) as f32 * height_ratio;
             
-            let vertices = [
-              x1, y1, 0.0, 
-              x2, y1, 0.0,
-              x1, y2, 0.0,
-              x1, y2, 0.0, 
-              x2, y1, 0.0,
-              x2, y2, 0.0
-              ];
+            vertices.push(x1);
+            vertices.push(y1);
+            vertices.push(0f32);
+            vertices.push(x2);
+            vertices.push(y1);
+            vertices.push(0f32);
+            vertices.push(x1);
+            vertices.push(y2);
+            vertices.push(0f32);
+            vertices.push(x1);
+            vertices.push(y2);
+            vertices.push(0f32);
+            vertices.push(x2);
+            vertices.push(y1);
+            vertices.push(0f32);
+            vertices.push(x2);
+            vertices.push(y2);
+            vertices.push(0f32);
 
-           
-            unsafe {
-
-                let positions_array_buf_view = js_sys::Float32Array::view(&vertices);
-        
-                context.buffer_data_with_array_buffer_view(
-                    WebGl2RenderingContext::ARRAY_BUFFER,
-                    &positions_array_buf_view,
-                    WebGl2RenderingContext::STATIC_DRAW,
-                );
-                
-                let color_uniform_location = context.get_uniform_location(&program, "u_color");
-                
-                
-                //context.uniform4f(color_uniform_location.as_ref(), 0.0, js_sys::Math::random() as f32, 0.0, 1.0);
-                context.uniform4f(color_uniform_location.as_ref(), 0.0, rand::random::<f32>(), 0.0, 1.0);
-                
-                //context.uniform4f(color_uniform_location.as_ref(), rand::random(), rand::random(), rand::random(), 1.0);
-            let vert_count = (vertices.len() / 3) as i32;
-            draw(&context, vert_count);
-            }
         }
     }
     
+
+    unsafe {
+
+        let positions_array_buf_view = js_sys::Float32Array::view(&vertices);
+
+        context.buffer_data_with_array_buffer_view(
+            WebGl2RenderingContext::ARRAY_BUFFER,
+            &positions_array_buf_view,
+            WebGl2RenderingContext::STATIC_DRAW,
+        );
+        
+    let vert_count = (vertices.len() / 3) as i32;
+    draw(&context, vert_count);
+    }
+
 }
 
 
@@ -73,10 +112,14 @@ pub fn start() -> Result<(), JsValue> {
         r##"#version 300 es
  
         in vec4 position;
+        in vec4 a_color;
+
+        out vec4 v_color;
 
         void main() {
         
             gl_Position = position;
+            v_color = a_color;
         }
         "##,
     )?;
@@ -88,12 +131,11 @@ pub fn start() -> Result<(), JsValue> {
     
         precision highp float;
 
-        uniform vec4 u_color;
-
+        in vec4 v_color;
         out vec4 outColor;
 
         void main() {
-            outColor = u_color;
+            outColor = v_color;
         }
         "##,
     )?;
@@ -101,6 +143,7 @@ pub fn start() -> Result<(), JsValue> {
     let program = link_program(&context, &vert_shader, &frag_shader)?;
     context.use_program(Some(&program));
     
+    let color_attribute_location = context.get_attrib_location(&program, "a_color");
     let position_attribute_location = context.get_attrib_location(&program, "position");
     
 
@@ -119,7 +162,14 @@ pub fn start() -> Result<(), JsValue> {
     // do any memory allocations before it's dropped.
     
 
+    //Set Color
+    let color_buffer = context.create_buffer().ok_or("Failed to create buffer")?;
+    context.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&color_buffer));
 
+    SetColor(&context, WIDTH, HEIGHT);
+
+    context.enable_vertex_attrib_array(color_attribute_location as u32);
+    context.vertex_attrib_pointer_with_i32(color_attribute_location as u32, 4, WebGl2RenderingContext::FLOAT, false, 0, 0);
 
     let buffer = context.create_buffer().ok_or("Failed to create buffer")?;
     context.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&buffer));
@@ -132,7 +182,7 @@ pub fn start() -> Result<(), JsValue> {
     context.clear_color(0.0, 0.0, 0.0, 1.0);
     context.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
 
-    SetRectangle(&program, &context, 400, 300);
+    SetRectangle(&context, WIDTH, HEIGHT);
     
     Ok(())
 }
